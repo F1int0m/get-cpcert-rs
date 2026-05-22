@@ -144,6 +144,47 @@ impl Gost28147 {
             chunk.copy_from_slice(&block);
         }
     }
+
+    /// CFB mode decrypt (8-bit feedback width = full block, per GOST 28147-89).
+    /// Decryption: P_i = C_i XOR E(IV_i); IV_{i+1} = C_i.
+    /// Works for any length; the last block may be partial.
+    pub fn decrypt_cfb(&self, iv: &[u8; 8], data: &mut [u8]) {
+        let mut feedback = *iv;
+        for chunk in data.chunks_mut(8) {
+            let mut enc = feedback;
+            self.encrypt_block(&mut enc);
+            let n = chunk.len();
+            let mut next = [0u8; 8];
+            next[..n].copy_from_slice(&chunk[..n]);
+            for i in 0..n {
+                chunk[i] ^= enc[i];
+            }
+            if n == 8 {
+                feedback = next;
+            } else {
+                // last partial block — no further feedback needed
+                break;
+            }
+        }
+    }
+
+    /// CFB mode encrypt (mirror of decrypt_cfb; used by tests / synthetic PFX).
+    pub fn encrypt_cfb(&self, iv: &[u8; 8], data: &mut [u8]) {
+        let mut feedback = *iv;
+        for chunk in data.chunks_mut(8) {
+            let mut enc = feedback;
+            self.encrypt_block(&mut enc);
+            let n = chunk.len();
+            for i in 0..n {
+                chunk[i] ^= enc[i];
+            }
+            if n == 8 {
+                feedback.copy_from_slice(&chunk[..8]);
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +231,19 @@ mod tests {
             chunk.copy_from_slice(&b);
         }
         cipher.decrypt_ecb(&mut buf);
+        assert_eq!(buf, plaintext);
+    }
+
+    #[test]
+    fn cfb_roundtrip_multiblock() {
+        let key = [0x77u8; 32];
+        let iv = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let cipher = Gost28147::new(&key, SBox::TC26_Z);
+        let plaintext: Vec<u8> = (0..70).collect(); // not a multiple of 8
+        let mut buf = plaintext.clone();
+        cipher.encrypt_cfb(&iv, &mut buf);
+        assert_ne!(buf, plaintext);
+        cipher.decrypt_cfb(&iv, &mut buf);
         assert_eq!(buf, plaintext);
     }
 

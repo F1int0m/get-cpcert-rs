@@ -3,9 +3,9 @@ members = [".", "wasm"]
 
 [package]
 name = "get-cpcert"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Extract certificate and private key from CryptoPro 4/5 container (GOST-2001/2012)"
+description = "Extract certificate and private key from CryptoPro 4/5 container or PFX (GOST-2001/2012)"
 license = "GPL-2.0-or-later"
 repository = "https://github.com/metron8/get-cpcert-rs"
 readme = "README.md"
@@ -27,6 +27,11 @@ streebog = "=0.10.2"        # GOST R 34.11-2012 (Streebog-256)
 gost94   = "=0.10.4"        # GOST R 34.11-94, includes Gost94CryptoPro
 
 digest = "=0.10.7"
+hmac   = "=0.12.1"        # HMAC over Streebog/Gost94 for PFX PBES2 + MacData
+sha1   = "=0.10.6"        # PKCS#12 v1 KDF / MacData (standard PBE-SHA1-RC2)
+rc2    = "=0.8.1"         # RFC 2268 cipher for the standard certBag PBE
+cbc    = "=0.1.2"         # CBC mode (with PKCS#7 padding) for the cert
+cipher = "=0.4.4"         # block-cipher trait used by rc2 + cbc
 
 # PEM output
 pem = "=3.0.4"

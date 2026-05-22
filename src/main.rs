@@ -13,16 +13,22 @@ use clap::Parser;
 #[command(
     name = "get-cpcert",
     version,
-    about = "Extract certificate + private key from a CryptoPro 4/5 container",
+    about = "Extract certificate + private key from a CryptoPro 4/5 container or .pfx",
     long_about = "\
-Reads a CryptoPro container directory (xxx.000) and writes a PEM bundle
-(CERTIFICATE + PRIVATE KEY) to stdout, suitable for use with GOST-enabled
-OpenSSL 1.1.1 or later.
+Reads either:
+  * a CryptoPro container directory (e.g. /path/to/MyKey.000), or
+  * a PKCS#12 / .pfx file exported by CryptoPro CSP
+       (PBES2 + PBKDF2-HMAC-Streebog256 + GOST 28147-89 CFB)
+
+and writes a PEM bundle (CERTIFICATE + PRIVATE KEY) to stdout, suitable
+for use with GOST-enabled OpenSSL 1.1.1 or later.
 
 Supports GOST R 34.10-2001, -2012/256 and -2012/512 containers."
 )]
 struct Cli {
-    /// Path to the container directory (e.g. /path/to/MyKey.000).
+    /// Path to the container directory (e.g. /path/to/MyKey.000) or to a
+    /// `.pfx` / `.p12` file.  Auto-detected by inspecting the path:
+    /// directory → CryptoPro container, file → PKCS#12.
     container: PathBuf,
 
     /// Password. If omitted, the program prompts on the TTY.
@@ -50,7 +56,25 @@ fn main() -> ExitCode {
         }
     };
 
-    match get_cpcert::extract(&cli.container, &password) {
+    let result = if cli.container.is_dir() {
+        get_cpcert::extract(&cli.container, &password)
+    } else if cli.container.is_file() {
+        match std::fs::read(&cli.container) {
+            Ok(bytes) => get_cpcert::extract_from_pfx(&bytes, &password),
+            Err(e) => {
+                eprintln!("error reading {}: {}", cli.container.display(), e);
+                return ExitCode::from(3);
+            }
+        }
+    } else {
+        eprintln!(
+            "error: {} is neither a directory nor a file",
+            cli.container.display()
+        );
+        return ExitCode::from(2);
+    };
+
+    match result {
         Ok(pem) => {
             if let Some(path) = cli.output {
                 if let Err(e) = std::fs::write(&path, pem) {

@@ -16,7 +16,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use get_cpcert::{container, extract_from_container};
+use get_cpcert::{container, extract_from_container, extract_from_pfx};
 
 #[wasm_bindgen(start)]
 pub fn init() {
@@ -41,4 +41,12 @@ pub fn extract_pem(
     let c = container::from_bytes(header, primary, masks)
         .map_err(|e| JsValue::from_str(&format!("container: {e}")))?;
     extract_from_container(&c, password).map_err(|e| JsValue::from_str(&format!("extract: {e}")))
+}
+
+/// Decrypt a `.pfx` / PKCS#12 file (CryptoPro export) and return the same
+/// PEM bundle.  Supports PBES2 with PBKDF2-HMAC-Streebog256 + GOST 28147-89
+/// CFB — the profile CryptoPro CSP emits.
+#[wasm_bindgen]
+pub fn extract_pem_from_pfx(pfx: &[u8], password: &str) -> Result<String, JsValue> {
+    extract_from_pfx(pfx, password).map_err(|e| JsValue::from_str(&format!("pfx: {e}")))
 }

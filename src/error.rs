@@ -29,6 +29,15 @@ pub enum Error {
 
     #[error("Cryptographic operation failed: {0}")]
     Crypto(&'static str),
+
+    #[error("PFX/PKCS#12 error: {0}")]
+    Pfx(String),
+
+    #[error("Unsupported PBE / encryption scheme: {0}")]
+    UnsupportedPbe(String),
+
+    #[error("PFX MAC verification failed (wrong password or tampered file)")]
+    MacFailed,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

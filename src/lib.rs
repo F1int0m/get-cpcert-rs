@@ -16,6 +16,9 @@ pub mod gost28147;
 pub mod gost_ec;
 pub mod kdf;
 pub mod pem_out;
+pub mod pfx;
+
+pub use crate::pfx::extract_from_pfx;
 
 use crate::container::{Algorithm, Container};
 use crate::error::{Error, Result};
