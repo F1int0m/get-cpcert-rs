@@ -1,0 +1,20 @@
+# Cargo build artifacts
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# wasm-pack output
+/wasm/pkg
+/wasm/demo/pkg
+
+# Editor / OS junk
+.DS_Store
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Local environment overrides
+.env
+.env.local

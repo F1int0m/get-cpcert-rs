@@ -1,0 +1,18 @@
+get-cpcert-rs authors
+=====================
+
+Original C implementation (get-cpcert):
+  Sergey Kovalev <kov-serg@github>
+  https://github.com/kov-serg/get-cpcert
+  Copyright (c) 2019, licensed under GPL-2.0
+
+Rust port (get-cpcert-rs):
+  metron8 <https://github.com/metron8>
+  Copyright (c) 2026, licensed under GPL-2.0-or-later
+
+The Rust port is an independent re-implementation of the same algorithm —
+all source code is written from scratch in Rust. No code is copied verbatim
+from the original C utility; only the cryptographic protocol (CryptoPro
+KDF, GOST 28147-89 with CryptoPro/TC26 S-boxes, GOST R 34.10 elliptic
+curve operations, PKCS#8 templating) is reproduced, as that is the
+specification, not the code.

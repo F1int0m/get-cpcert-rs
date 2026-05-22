@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>get-cpcert — browser demo</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 740px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    h1 { font-size: 1.4rem; }
+    .row { margin: 0.6rem 0; }
+    label { display: inline-block; min-width: 130px; }
+    input[type="file"] { font-size: 0.9rem; }
+    input[type="password"] { width: 240px; padding: 4px 6px; }
+    button { padding: 6px 14px; cursor: pointer; }
+    pre { background: #f4f4f4; padding: 8px; overflow-x: auto; max-height: 480px; }
+    .err { color: #b00020; white-space: pre-wrap; }
+    .note { color: #555; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>get-cpcert — извлечение ключа в браузере</h1>
+  <p class="note">
+    Файлы контейнера КриптоПро остаются в браузере — ничего на сервер не отправляется.
+    Загрузите три файла из директории контейнера и введите пароль.
+  </p>
+
+  <div class="row"><label>header.key</label> <input type="file" id="header" /></div>
+  <div class="row"><label>primary.key</label> <input type="file" id="primary" /></div>
+  <div class="row"><label>masks.key</label>   <input type="file" id="masks" /></div>
+  <div class="row"><label>Пароль</label>      <input type="password" id="pwd" placeholder="(оставьте пустым если без пароля)" /></div>
+  <div class="row"><button id="go">Извлечь PEM</button>
+                  <button id="download" disabled>Скачать .pem</button></div>
+
+  <div id="error" class="err"></div>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import init, { extract_pem } from './pkg/get_cpcert_wasm.js';
+
+    let lastPem = null;
+
+    function readFile(input) {
+      const f = input.files[0];
+      if (!f) throw new Error(`не выбран файл: ${input.id}`);
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(new Uint8Array(r.result));
+        r.onerror = () => reject(r.error);
+        r.readAsArrayBuffer(f);
+      });
+    }
+
+    document.getElementById('go').addEventListener('click', async () => {
+      const errEl = document.getElementById('error');
+      const outEl = document.getElementById('output');
+      errEl.textContent = '';
+      outEl.textContent = '';
+      lastPem = null;
+      document.getElementById('download').disabled = true;
+
+      try {
+        const [header, primary, masks] = await Promise.all([
+          readFile(document.getElementById('header')),
+          readFile(document.getElementById('primary')),
+          readFile(document.getElementById('masks')),
+        ]);
+        const pwd = document.getElementById('pwd').value;
+        const pem = extract_pem(header, primary, masks, pwd);
+        outEl.textContent = pem;
+        lastPem = pem;
+        document.getElementById('download').disabled = false;
+      } catch (e) {
+        errEl.textContent = `Ошибка: ${e}`;
+      }
+    });
+
+    document.getElementById('download').addEventListener('click', () => {
+      if (!lastPem) return;
+      const blob = new Blob([lastPem], { type: 'application/x-pem-file' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'cert.pem';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    await init();
+  </script>
+</body>
+</html>

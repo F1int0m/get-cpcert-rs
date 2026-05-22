@@ -1,0 +1,53 @@
+[workspace]
+members = [".", "wasm"]
+
+[package]
+name = "get-cpcert"
+version = "0.1.0"
+edition = "2021"
+description = "Extract certificate and private key from CryptoPro 4/5 container (GOST-2001/2012)"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/metron8/get-cpcert-rs"
+readme = "README.md"
+keywords = ["cryptopro", "gost", "certificate", "pem", "pkcs8"]
+categories = ["command-line-utilities", "cryptography"]
+
+[dependencies]
+# Errors
+thiserror = "=1.0.69"
+anyhow = "=1.0.86"
+
+# Big integers / modular arithmetic for EC math
+num-bigint-dig = { version = "=0.8.4", features = ["prime"] }
+num-traits = "=0.2.19"
+num-integer = "=0.1.46"
+
+# GOST hashes
+streebog = "=0.10.2"        # GOST R 34.11-2012 (Streebog-256)
+gost94   = "=0.10.4"        # GOST R 34.11-94, includes Gost94CryptoPro
+
+digest = "=0.10.7"
+
+# PEM output
+pem = "=3.0.4"
+
+# Zeroize secrets
+zeroize = { version = "=1.8.1", features = ["derive"] }
+
+# CLI deps — only on native targets. rpassword needs termios/Windows
+# console APIs that don't exist on wasm.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+clap = { version = "=4.5.4", features = ["derive"] }
+rpassword = "=7.3.1"
+
+[[bin]]
+name = "get-cpcert"
+path = "src/main.rs"
+# Don't try to build the CLI when targeting wasm (it depends on clap/rpassword
+# which we gate above).
+required-features = []
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
