@@ -1171,7 +1171,7 @@ mod tests {
     fn reencode_long_length() {
         // OCTET STRING (130 bytes)
         let mut data = vec![0x04, 0x81, 130];
-        data.extend(std::iter::repeat_n(0xAB, 130));
+        data.extend(std::iter::repeat(0xAB).take(130));
         let n = asn1::parse(&data).unwrap();
         let re = reencode(&n);
         assert_eq!(re, data);

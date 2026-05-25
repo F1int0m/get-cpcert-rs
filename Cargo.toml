@@ -5,6 +5,7 @@ members = [".", "wasm"]
 name = "get-cpcert"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.75"
 description = "Extract certificate and private key from CryptoPro 4/5 container or PFX (GOST-2001/2012)"
 license = "GPL-2.0-or-later"
 repository = "https://github.com/metron8/get-cpcert-rs"

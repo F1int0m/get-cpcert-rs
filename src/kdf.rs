@@ -4,17 +4,19 @@
 //!
 //! High-level idea (HMAC-like construction with a fixed "salt0" magic):
 //!
-//!   1.  Spread each ASCII char of the password into a UTF-16LE byte
-//!       (`pin[i*4] = pass[i]`).
-//!   2.  `salt_pass = H(salt || pin)`.
-//!   3.  `current = "DENEFH028.760246785.IUEFHWUIO.EF" || zeros[..]`.
-//!   4.  Iterate N times (2000 if password non-empty, else 2):
-//!         current = H( current⊕0x36 || salt_pass || current⊕0x5C || salt_pass )
-//!       (the ⊕ pads `current` to SIZE2 bytes; for 2012 the trailing zeros
-//!        stay zero and so xor with 0x36/0x5C is constant)
-//!   5.  Final mix:
-//!         current = H( current⊕0x36 || salt || current⊕0x5C || pin )
-//!         out     = H(current)
+//! ```text
+//! 1. Spread each ASCII char of the password into a UTF-16LE byte
+//!    (`pin[i*4] = pass[i]`).
+//! 2. salt_pass = H(salt || pin).
+//! 3. current = "DENEFH028.760246785.IUEFHWUIO.EF" || zeros[..].
+//! 4. Iterate N times (2000 if password non-empty, else 2):
+//!      current = H( current⊕0x36 || salt_pass || current⊕0x5C || salt_pass )
+//!    (the ⊕ pads `current` to SIZE2 bytes; for 2012 the trailing zeros
+//!     stay zero and so xor with 0x36/0x5C is constant)
+//! 5. Final mix:
+//!      current = H( current⊕0x36 || salt || current⊕0x5C || pin )
+//!      out     = H(current)
+//! ```
 //!
 //! The 2001 and 2012 variants differ only in:
 //!   * hash function (Gost94/CryptoPro vs Streebog-256)

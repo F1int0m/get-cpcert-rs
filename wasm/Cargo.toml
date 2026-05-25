@@ -19,5 +19,12 @@ wasm-bindgen = "=0.2.92"
 # Better panic messages in the browser console.
 console_error_panic_hook = { version = "=0.1.7", optional = true }
 
+# Activate the `js` feature of getrandom (pulled in transitively by
+# num-bigint-dig → rand → rand_core → getrandom) so the wasm build can
+# resolve a randomness source.  Without this, getrandom emits a
+# `compile_error!` for wasm-unknown-unknown.
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "=0.2.17", features = ["js"] }
+
 [features]
 default = ["console_error_panic_hook"]

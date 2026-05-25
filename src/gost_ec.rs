@@ -8,11 +8,10 @@
 //!      in `header.key`.
 //!
 //! Curves used by the original utility:
-//!   * GOST-2001         → id-GostR3410-2001-CryptoPro-XchA-ParamSet
-//!                         (OID 1.2.643.2.2.36.0)
-//!   * GOST-2012-256     → same curve as above
-//!   * GOST-2012-512     → id-tc26-gost-3410-2012-512-paramSetA
-//!                         (OID 1.2.643.7.1.2.1.2.1)
+//!
+//! * GOST-2001 — id-GostR3410-2001-CryptoPro-XchA-ParamSet (OID 1.2.643.2.2.36.0)
+//! * GOST-2012-256 — same curve as above
+//! * GOST-2012-512 — id-tc26-gost-3410-2012-512-paramSetA (OID 1.2.643.7.1.2.1.2.1)
 //!
 //! Curves are in short Weierstrass form: y² = x³ + a·x + b  (mod p).
 
