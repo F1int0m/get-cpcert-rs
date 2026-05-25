@@ -120,33 +120,64 @@ fn parse_pfx_outer(pfx: &Node) -> Result<Vec<u8>> {
     // children[0] = version INTEGER
     // children[1] = authSafe ContentInfo
     // children[2] = macData (optional, ignored for v1)
-    let authsafe_bytes = unwrap_id_data_content(&pfx.children[1])
-        .ok_or_else(|| Error::Pfx("authSafe must be id-data".into()))?;
-    Ok(authsafe_bytes)
+    unwrap_id_data_content(&pfx.children[1])
 }
 
-/// If `ci` is a ContentInfo with contentType = id-data, return the OCTET
-/// STRING content bytes (which is the "embedded" message).  Returns None
-/// otherwise.
-fn unwrap_id_data_content(ci: &Node) -> Option<Vec<u8>> {
+/// If `ci` is a ContentInfo with contentType = id-data, return its embedded
+/// OCTET STRING content (concatenating children if the OCTET STRING is
+/// constructed — common for large authSafes encoded in BER chunks).
+fn unwrap_id_data_content(ci: &Node) -> Result<Vec<u8>> {
     if ci.tag != asn1::universal::SEQUENCE || ci.children.len() < 2 {
-        return None;
+        return Err(Error::Pfx(format!(
+            "ContentInfo must be a 2-field SEQUENCE, got tag={} children={}",
+            ci.tag,
+            ci.children.len()
+        )));
     }
-    let oid = ci.children[0].as_oid_string().ok()?;
+    let oid = ci.children[0].as_oid_string()?;
     if oid != OID_DATA {
-        return None;
+        return Err(Error::Pfx(format!(
+            "authSafe contentType must be id-data ({OID_DATA}), got {oid}",
+        )));
     }
     // children[1] is [0] EXPLICIT, containing a single OCTET STRING.
     let explicit = &ci.children[1];
     if explicit.class != TagClass::ContextSpecific || explicit.tag != 0 {
+        return Err(Error::Pfx(format!(
+            "ContentInfo content tag expected [0] EXPLICIT, got class={:?} tag={}",
+            explicit.class, explicit.tag
+        )));
+    }
+    let inner = explicit
+        .children
+        .first()
+        .ok_or_else(|| Error::Pfx("empty [0] EXPLICIT wrapper".into()))?;
+    octet_string_content(inner).ok_or_else(|| {
+        Error::Pfx(format!(
+            "expected OCTET STRING inside [0] EXPLICIT, got class={:?} tag={} constructed={}",
+            inner.class, inner.tag, inner.constructed
+        ))
+    })
+}
+
+/// Return the byte content of an OCTET STRING node.  Handles both
+/// primitive form (`content` is the bytes) and constructed form
+/// (`children` are inner OCTET STRINGs whose contents must be
+/// concatenated — possibly recursively).  Returns `None` if the node
+/// is not an OCTET STRING at all.
+fn octet_string_content(node: &Node) -> Option<Vec<u8>> {
+    if node.class != TagClass::Universal || node.tag != asn1::universal::OCTET_STRING {
         return None;
     }
-    // Explicit wrapping: the OCTET STRING is the only child.
-    let inner = explicit.children.first()?;
-    if !inner.is_octet_string() {
-        return None;
+    if !node.constructed {
+        return Some(node.content.clone());
     }
-    Some(inner.content.clone())
+    let mut out = Vec::new();
+    for c in &node.children {
+        let bytes = octet_string_content(c)?;
+        out.extend(bytes);
+    }
+    Some(out)
 }
 
 // ---- AuthenticatedSafe / ContentInfo decryption ------------------------------
@@ -159,8 +190,7 @@ fn unwrap_content_info(ci: &Node, password: &str) -> Result<Vec<u8>> {
     }
     let oid = ci.children[0].as_oid_string()?;
     match oid.as_str() {
-        OID_DATA => unwrap_id_data_content(ci)
-            .ok_or_else(|| Error::Pfx("id-data ContentInfo malformed".into())),
+        OID_DATA => unwrap_id_data_content(ci),
         OID_ENCRYPTED_DATA => {
             // children[1] = [0] EXPLICIT EncryptedData
             let explicit = &ci.children[1];
@@ -205,15 +235,21 @@ fn decrypt_encrypted_data(enc_data: &Node, password: &str) -> Result<Vec<u8>> {
     let enc_content = &eci.children[2];
 
     // [0] IMPLICIT OCTET STRING — appears as a primitive context-specific
-    // tag 0 whose content is the raw ciphertext.
+    // tag 0 whose content is the raw ciphertext.  For BER-encoded large
+    // ciphertexts the [0] may be constructed; concatenate child segments.
     if enc_content.class != TagClass::ContextSpecific || enc_content.tag != 0 {
-        return Err(Error::Pfx("encryptedContent missing".into()));
+        return Err(Error::Pfx(format!(
+            "encryptedContent expected [0] IMPLICIT, got class={:?} tag={}",
+            enc_content.class, enc_content.tag
+        )));
     }
     let ciphertext = if enc_content.constructed {
-        // Some encoders emit a constructed OCTET STRING; concat children.
         let mut buf = Vec::new();
         for c in &enc_content.children {
-            buf.extend_from_slice(&c.content);
+            // Child segments inside an [0] IMPLICIT OCTET STRING are also
+            // OCTET STRINGs by IMPLICIT-tag inheritance.  Walk recursively
+            // to handle nested constructed forms.
+            buf.extend(octet_string_content(c).unwrap_or_else(|| c.content.clone()));
         }
         buf
     } else {
@@ -439,11 +475,14 @@ fn extract_bag(
                 .children
                 .first()
                 .ok_or_else(|| Error::Pfx("certBag certValue empty".into()))?;
-            if !inner.is_octet_string() {
-                return Err(Error::Pfx("certBag certValue must be OCTET STRING".into()));
-            }
+            let cert_bytes = octet_string_content(inner).ok_or_else(|| {
+                Error::Pfx(format!(
+                    "certBag certValue must be OCTET STRING, got class={:?} tag={} constructed={}",
+                    inner.class, inner.tag, inner.constructed
+                ))
+            })?;
             if cert_out.is_none() {
-                *cert_out = Some(inner.content.clone());
+                *cert_out = Some(cert_bytes);
             }
             Ok(())
         }
@@ -466,12 +505,13 @@ fn extract_bag(
             }
             let alg = &bag_value.children[0];
             let enc_data = &bag_value.children[1];
-            if !enc_data.is_octet_string() {
-                return Err(Error::Pfx(
-                    "shroudedKeyBag encryptedData must be OCTET STRING".into(),
-                ));
-            }
-            let pk_info_bytes = decrypt_with_alg(alg, &enc_data.content, password)?;
+            let ciphertext = octet_string_content(enc_data).ok_or_else(|| {
+                Error::Pfx(format!(
+                    "shroudedKeyBag encryptedData must be OCTET STRING, got class={:?} tag={} constructed={}",
+                    enc_data.class, enc_data.tag, enc_data.constructed
+                ))
+            })?;
+            let pk_info_bytes = decrypt_with_alg(alg, &ciphertext, password)?;
             // Sanity-check: a correctly decrypted PrivateKeyInfo must be a
             // valid DER SEQUENCE whose length covers the whole buffer.  This
             // catches most wrong-password cases without needing full MAC
