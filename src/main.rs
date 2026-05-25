@@ -43,10 +43,21 @@ struct Cli {
     /// Write output to this file instead of stdout.
     #[arg(short, long)]
     output: Option<PathBuf>,
+
+    /// Diagnostic mode: print a structural report of the .pfx file
+    /// (OIDs, PBE schemes, salt/iter, bag types, MAC) and exit.
+    /// Does NOT decrypt anything and does not require a password.
+    /// Only valid when the input is a PFX file (not a container).
+    #[arg(long)]
+    inspect: bool,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if cli.inspect {
+        return run_inspect(&cli.container);
+    }
 
     let password = match resolve_password(&cli) {
         Ok(p) => p,
@@ -93,6 +104,35 @@ fn main() -> ExitCode {
         }
         Err(e) => {
             eprintln!("error: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `--inspect` handler: read the file, run [`pfx::inspect_pfx`], print to stdout.
+/// Returns appropriate exit code.
+fn run_inspect(path: &PathBuf) -> ExitCode {
+    if !path.is_file() {
+        eprintln!(
+            "error: --inspect only works on PFX/.p12 files (got {})",
+            path.display()
+        );
+        return ExitCode::from(2);
+    }
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("error reading {}: {}", path.display(), e);
+            return ExitCode::from(3);
+        }
+    };
+    match get_cpcert::pfx::inspect_pfx(&bytes) {
+        Ok(report) => {
+            print!("{report}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("inspect error: {e}");
             ExitCode::from(1)
         }
     }

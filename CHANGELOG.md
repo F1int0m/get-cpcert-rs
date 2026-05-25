@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - PBE-SHA1-3-Key-TripleDES-CBC (`1.2.840.113549.1.12.1.3`) — handles PFX variants where cert or key bags are wrapped with 3DES instead of RC2-40. New dependency: `des`. Verified end-to-end against an OpenSSL-generated reference PFX (cert+key both wrapped with 3DES).
+- BER constructed-form OCTET STRING handling in authSafe, certBag and shroudedKeyBag — fixes "authSafe must be id-data" on PFX files whose large OCTET STRINGs are chunked.
+- OID registry (`get_cpcert::oid::{name, describe}`) covering the PKCS#7, PKCS#12, PBE, GOST hash/cipher, EC paramSet and ГОСТ public-key OIDs we touch. Used to format error messages and inspector output.
+- Structural PFX inspector: `get_cpcert::pfx::inspect_pfx(bytes) -> PfxReport` plus `Display`. Walks the PFX tree, identifies every ContentInfo / SafeBag, surfaces PBE OIDs, salt, iteration count, and MAC parameters — without decrypting and without a password.
+- CLI `--inspect` flag: `get-cpcert --inspect cert.pfx` prints the report to stdout and exits. Ideal for diagnosing unfamiliar files when extraction fails.
+- New integration test `pfx_inspect_runs_on_all_samples` verifies the inspector across every fixture (no password needed).
+
+### Changed
+
+- `Error::UnsupportedPbe` and related messages now include the friendly OID name and a hint to run `--inspect`.
 
 ## [0.2.0] — PFX / PKCS#12 import
 

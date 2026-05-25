@@ -47,6 +47,46 @@ get-cpcert /path/to/cert.pfx -p '' -o cert.pem
 
 Пароль PFX задаётся в момент экспорта в КриптоПро CSP и **может отличаться** от пароля контейнера-источника. Если экспорт был без пароля — передавайте `-p ''`.
 
+### Диагностика `--inspect`
+
+Когда расшифровка падает с непонятной ошибкой, посмотрите внутрь файла **без пароля**:
+
+```bash
+get-cpcert --inspect /path/to/cert.pfx
+```
+
+Печатает структурный отчёт: версия PFX, тип authSafe, список ContentInfo'ов, для каждого SafeBag — его тип, размер, какая PBE-схема использована для шифрования (со своими salt и iter), и информацию о MAC. OID'ы выводятся со своими «человеческими» именами. Никакая расшифровка не происходит, пароль не нужен.
+
+Пример вывода:
+
+```
+PFX inspection report
+  version           : Some(3)
+  authSafe type     : 1.2.840.113549.1.7.1 (id-data (PKCS#7))
+  authSafe size     : 1039 bytes
+  ContentInfos      : 2
+    [0] type        : 1.2.840.113549.1.7.1 (id-data (PKCS#7))
+        bags      : 1
+          [0] 1.2.840.113549.1.12.10.1.2 (pkcs8ShroudedKeyBag) (180 bytes)
+              PBE  : 1.2.840.113549.1.12.1.80 (CryptoPro PBE (.80) — proprietary GOST key transport)
+              salt : E0BC484885A96EEAC759D2949D450465
+              iter : 2000
+              ct   : 139 bytes
+    [1] type        : 1.2.840.113549.1.7.6 (id-encryptedData (PKCS#7))
+        encrypted
+          PBE       : 1.2.840.113549.1.12.1.6 (pbeWithSHAAnd40BitRC2-CBC)
+          salt      : 08C355881F352C409308205125D0FE8A
+          iter      : 2000
+          ct size   : 584 bytes
+  MacData
+    digest          : 1.3.14.3.2.26 (id-sha1)
+    salt            : B79BE1AB2502F02A08DFCFA7D86796597E4CA476
+    iter            : 2000
+    digest value    : 394A5521712DB9F4B20CA7ADB0ABB7232DCA76EE
+```
+
+Если столкнётесь с неподдерживаемым форматом — пришлите вывод `--inspect`, по нему сразу видно, какую PBE/bag нужно добавить.
+
 ### Использование как библиотека
 
 ```rust

@@ -32,6 +32,7 @@ use zeroize::Zeroize;
 use crate::asn1::{self, Node, TagClass};
 use crate::error::{Error, Result};
 use crate::gost28147::{Gost28147, SBox};
+use crate::oid;
 use crate::pem_out;
 
 // ---- OID constants ----------------------------------------------------------
@@ -206,7 +207,8 @@ fn unwrap_content_info(ci: &Node, password: &str) -> Result<Vec<u8>> {
             decrypt_encrypted_data(enc_data, password)
         }
         other => Err(Error::UnsupportedPbe(format!(
-            "unknown ContentInfo type OID {other}"
+            "unknown ContentInfo type {}",
+            oid::describe(other)
         ))),
     }
 }
@@ -277,7 +279,8 @@ fn decrypt_with_alg(alg: &Node, ciphertext: &[u8], password: &str) -> Result<Vec
         OID_PBE_SHA1_RC2_40 => decrypt_pbe_sha1_rc2_40(params, ciphertext, password),
         OID_PBE_SHA1_3DES => decrypt_pbe_sha1_3des(params, ciphertext, password),
         other => Err(Error::UnsupportedPbe(format!(
-            "encryption scheme {other} not supported"
+            "encryption scheme {} not supported (try `get-cpcert --inspect <file>` to see full structure)",
+            oid::describe(other)
         ))),
     }
 }
@@ -1040,6 +1043,415 @@ fn validate_pkcs8(bytes: &[u8]) -> Result<()> {
         return Err(Error::InvalidPassword);
     }
     Ok(())
+}
+
+// ---- PFX inspector (read-only structural dump, no password needed) --------
+
+/// Structural report produced by [`inspect_pfx`].  Use its `Display` impl
+/// to print the report, or read fields directly for programmatic use.
+///
+/// The inspector walks the PFX *structure* only — it does **not** decrypt
+/// anything (no password is needed) and does **not** require the file to
+/// be one we support.  Designed for diagnosing unfamiliar `.pfx` files
+/// when extraction fails.
+#[derive(Debug, Clone)]
+pub struct PfxReport {
+    pub pfx_version: Option<u32>,
+    pub authsafe_content_type: String,
+    /// `None` if the inspector could not unwrap the authSafe envelope.
+    pub authsafe_size_bytes: Option<usize>,
+    /// One entry per ContentInfo inside the AuthenticatedSafe.
+    pub content_infos: Vec<ContentInfoReport>,
+    /// MacData info, if present.
+    pub mac: Option<MacReport>,
+    /// Non-fatal warnings — things the inspector noticed but kept going.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContentInfoReport {
+    pub content_type: String,
+    pub kind: ContentInfoKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum ContentInfoKind {
+    /// Plain `id-data` — SafeContents directly inside.
+    Data { bags: Vec<BagReport> },
+    /// `id-encryptedData` — PBE wrapper.  Bags can't be enumerated without
+    /// the password.
+    Encrypted {
+        pbe_oid: String,
+        salt_hex: Option<String>,
+        iter_count: Option<u32>,
+        ciphertext_size: usize,
+    },
+    /// Anything else — recorded so the user can ask for support.
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct BagReport {
+    pub bag_type: String,
+    pub size_hint: usize,
+    /// For pkcs8ShroudedKeyBag: the PBE used to encrypt the inner key.
+    pub inner_pbe: Option<InnerPbeReport>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InnerPbeReport {
+    pub pbe_oid: String,
+    pub salt_hex: Option<String>,
+    pub iter_count: Option<u32>,
+    pub ciphertext_size: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct MacReport {
+    pub digest_oid: String,
+    pub salt_hex: String,
+    pub iter_count: u32,
+    pub digest_hex: String,
+}
+
+/// Walk a PFX blob and produce a structural report.  Never throws on
+/// "unrecognized" parts — they're just recorded as `Unknown`/warnings —
+/// but does return an error if the bytes don't even parse as ASN.1.
+pub fn inspect_pfx(pfx_bytes: &[u8]) -> Result<PfxReport> {
+    let pfx = asn1::parse(pfx_bytes).map_err(|e| Error::Pfx(format!("outer parse: {e}")))?;
+
+    let mut warnings = Vec::new();
+    let mut report = PfxReport {
+        pfx_version: None,
+        authsafe_content_type: String::from("<unknown>"),
+        authsafe_size_bytes: None,
+        content_infos: Vec::new(),
+        mac: None,
+        warnings: Vec::new(),
+    };
+
+    if pfx.tag != asn1::universal::SEQUENCE || !pfx.constructed {
+        warnings.push(format!(
+            "PFX root expected SEQUENCE, got tag={} class={:?} constructed={}",
+            pfx.tag, pfx.class, pfx.constructed
+        ));
+        report.warnings = warnings;
+        return Ok(report);
+    }
+
+    // ---- version ----
+    if let Some(v_node) = pfx.children.first() {
+        if v_node.tag == asn1::universal::INTEGER {
+            if let Ok(v) = der_int_to_u32(&v_node.content) {
+                report.pfx_version = Some(v);
+            }
+        }
+    }
+
+    // ---- authSafe ContentInfo ----
+    if let Some(ci) = pfx.children.get(1) {
+        if let Some(oid_node) = ci.children.first() {
+            if let Ok(oid_str) = oid_node.as_oid_string() {
+                report.authsafe_content_type = oid::describe(&oid_str);
+                if oid_str == OID_DATA {
+                    match unwrap_id_data_content(ci) {
+                        Ok(authsafe_bytes) => {
+                            report.authsafe_size_bytes = Some(authsafe_bytes.len());
+                            inspect_authsafe(&authsafe_bytes, &mut report, &mut warnings);
+                        }
+                        Err(e) => warnings.push(format!("authSafe unwrap failed: {e}")),
+                    }
+                } else {
+                    warnings.push(format!(
+                        "authSafe contentType is {oid_str} — only id-data is currently parsed"
+                    ));
+                }
+            }
+        }
+    }
+
+    // ---- macData ----
+    if let Some(mac_node) = pfx.children.get(2) {
+        report.mac = inspect_mac(mac_node, &mut warnings);
+    }
+
+    report.warnings = warnings;
+    Ok(report)
+}
+
+fn inspect_authsafe(authsafe_bytes: &[u8], report: &mut PfxReport, warnings: &mut Vec<String>) {
+    let authsafe = match asn1::parse(authsafe_bytes) {
+        Ok(n) => n,
+        Err(e) => {
+            warnings.push(format!("AuthenticatedSafe parse failed: {e}"));
+            return;
+        }
+    };
+    if authsafe.tag != asn1::universal::SEQUENCE {
+        warnings.push("AuthenticatedSafe is not a SEQUENCE".into());
+        return;
+    }
+    for ci in &authsafe.children {
+        report
+            .content_infos
+            .push(inspect_content_info(ci, warnings));
+    }
+}
+
+fn inspect_content_info(ci: &Node, warnings: &mut Vec<String>) -> ContentInfoReport {
+    let oid_str = ci
+        .children
+        .first()
+        .and_then(|n| n.as_oid_string().ok())
+        .unwrap_or_else(|| "<missing OID>".into());
+
+    let kind = match oid_str.as_str() {
+        OID_DATA => match unwrap_id_data_content(ci) {
+            Ok(inner) => match asn1::parse(&inner) {
+                Ok(safe_contents) if safe_contents.tag == asn1::universal::SEQUENCE => {
+                    let bags = safe_contents
+                        .children
+                        .iter()
+                        .map(|b| inspect_bag(b, warnings))
+                        .collect();
+                    ContentInfoKind::Data { bags }
+                }
+                Ok(_) => {
+                    warnings.push("id-data content is not a SEQUENCE of SafeBags".into());
+                    ContentInfoKind::Unknown
+                }
+                Err(e) => {
+                    warnings.push(format!("id-data inner parse failed: {e}"));
+                    ContentInfoKind::Unknown
+                }
+            },
+            Err(e) => {
+                warnings.push(format!("id-data unwrap failed: {e}"));
+                ContentInfoKind::Unknown
+            }
+        },
+        OID_ENCRYPTED_DATA => inspect_encrypted_data(ci, warnings),
+        _ => ContentInfoKind::Unknown,
+    };
+
+    ContentInfoReport {
+        content_type: oid::describe(&oid_str),
+        kind,
+    }
+}
+
+fn inspect_encrypted_data(ci: &Node, warnings: &mut Vec<String>) -> ContentInfoKind {
+    let explicit = ci.children.get(1);
+    let enc_data = explicit.and_then(|e| e.children.first());
+    let Some(enc_data) = enc_data else {
+        warnings.push("encryptedData missing [0] wrapper".into());
+        return ContentInfoKind::Unknown;
+    };
+    let eci = enc_data.children.get(1);
+    let Some(eci) = eci else {
+        warnings.push("EncryptedContentInfo missing".into());
+        return ContentInfoKind::Unknown;
+    };
+    let alg = eci.children.get(1);
+    let enc_content = eci.children.get(2);
+    let (oid_str, salt, iter) = describe_pbe(alg);
+    let ciphertext_size = enc_content
+        .map(|c| {
+            if c.constructed {
+                c.children.iter().map(|x| x.content.len()).sum()
+            } else {
+                c.content.len()
+            }
+        })
+        .unwrap_or(0);
+    ContentInfoKind::Encrypted {
+        pbe_oid: oid::describe(&oid_str),
+        salt_hex: salt.map(|s| hex_short(&s)),
+        iter_count: iter,
+        ciphertext_size,
+    }
+}
+
+fn inspect_bag(bag: &Node, warnings: &mut Vec<String>) -> BagReport {
+    let bag_id = bag
+        .children
+        .first()
+        .and_then(|n| n.as_oid_string().ok())
+        .unwrap_or_else(|| "<missing>".into());
+    let bag_value = bag.children.get(1).and_then(|w| w.children.first());
+
+    let size_hint = bag_value.map(|n| n.content.len()).unwrap_or(0);
+
+    let mut inner_pbe = None;
+    if bag_id == OID_SHROUDED_KEY_BAG {
+        if let Some(bv) = bag_value {
+            // EncryptedPrivateKeyInfo { alg, encryptedData OCTET STRING }
+            let alg = bv.children.first();
+            let enc_data = bv.children.get(1);
+            let (oid_str, salt, iter) = describe_pbe(alg);
+            let ciphertext_size = enc_data
+                .and_then(octet_string_content)
+                .map(|v| v.len())
+                .unwrap_or_else(|| enc_data.map(|n| n.content.len()).unwrap_or(0));
+            inner_pbe = Some(InnerPbeReport {
+                pbe_oid: oid::describe(&oid_str),
+                salt_hex: salt.map(|s| hex_short(&s)),
+                iter_count: iter,
+                ciphertext_size,
+            });
+        } else {
+            warnings.push("shroudedKeyBag has no bagValue".into());
+        }
+    }
+
+    BagReport {
+        bag_type: oid::describe(&bag_id),
+        size_hint,
+        inner_pbe,
+    }
+}
+
+/// Extract (algorithm OID, salt, iter) from an AlgorithmIdentifier node
+/// whose parameters look like the standard PKCS#12 PBE shape
+/// `SEQUENCE { salt OCTET STRING, iterCount INTEGER }`.  Falls back
+/// gracefully when the shape doesn't match.
+fn describe_pbe(alg: Option<&Node>) -> (String, Option<Vec<u8>>, Option<u32>) {
+    let Some(alg) = alg else {
+        return ("<missing>".into(), None, None);
+    };
+    let oid_str = alg
+        .children
+        .first()
+        .and_then(|n| n.as_oid_string().ok())
+        .unwrap_or_else(|| "<missing OID>".into());
+    let params = alg.children.get(1);
+    match params.and_then(|p| parse_pkcs12_pbe_params(Some(p)).ok()) {
+        Some((salt, iter)) => (oid_str, Some(salt), Some(iter)),
+        None => (oid_str, None, None),
+    }
+}
+
+fn inspect_mac(mac_node: &Node, warnings: &mut Vec<String>) -> Option<MacReport> {
+    if mac_node.tag != asn1::universal::SEQUENCE || mac_node.children.len() < 2 {
+        warnings.push("macData malformed".into());
+        return None;
+    }
+    let digest_info = &mac_node.children[0];
+    let salt_node = &mac_node.children[1];
+    let iter_node = mac_node.children.get(2);
+
+    let digest_oid = digest_info
+        .children
+        .first()
+        .and_then(|alg_id| alg_id.children.first())
+        .and_then(|oid_node| oid_node.as_oid_string().ok())
+        .unwrap_or_else(|| "<unknown>".into());
+    let digest_hex = digest_info
+        .children
+        .get(1)
+        .map(|n| hex_short(&n.content))
+        .unwrap_or_default();
+    let salt_hex = if salt_node.is_octet_string() {
+        hex_short(&salt_node.content)
+    } else {
+        String::new()
+    };
+    let iter_count = iter_node
+        .and_then(|n| der_int_to_u32(&n.content).ok())
+        .unwrap_or(1);
+
+    Some(MacReport {
+        digest_oid: oid::describe(&digest_oid),
+        salt_hex,
+        iter_count,
+        digest_hex,
+    })
+}
+
+fn hex_short(b: &[u8]) -> String {
+    const MAX: usize = 32;
+    if b.len() <= MAX {
+        b.iter().map(|x| format!("{x:02X}")).collect()
+    } else {
+        let head: String = b[..MAX / 2].iter().map(|x| format!("{x:02X}")).collect();
+        let tail: String = b[b.len() - MAX / 2..]
+            .iter()
+            .map(|x| format!("{x:02X}"))
+            .collect();
+        format!("{head}…{tail} ({} bytes)", b.len())
+    }
+}
+
+impl std::fmt::Display for PfxReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "PFX inspection report")?;
+        writeln!(f, "  version           : {:?}", self.pfx_version)?;
+        writeln!(f, "  authSafe type     : {}", self.authsafe_content_type)?;
+        if let Some(n) = self.authsafe_size_bytes {
+            writeln!(f, "  authSafe size     : {n} bytes")?;
+        }
+        writeln!(f, "  ContentInfos      : {}", self.content_infos.len())?;
+        for (i, ci) in self.content_infos.iter().enumerate() {
+            writeln!(f, "    [{i}] type        : {}", ci.content_type)?;
+            match &ci.kind {
+                ContentInfoKind::Data { bags } => {
+                    writeln!(f, "        bags      : {}", bags.len())?;
+                    for (j, bag) in bags.iter().enumerate() {
+                        writeln!(
+                            f,
+                            "          [{j}] {} ({} bytes)",
+                            bag.bag_type, bag.size_hint
+                        )?;
+                        if let Some(pbe) = &bag.inner_pbe {
+                            writeln!(f, "              PBE  : {}", pbe.pbe_oid)?;
+                            if let Some(s) = &pbe.salt_hex {
+                                writeln!(f, "              salt : {s}")?;
+                            }
+                            if let Some(c) = pbe.iter_count {
+                                writeln!(f, "              iter : {c}")?;
+                            }
+                            writeln!(f, "              ct   : {} bytes", pbe.ciphertext_size)?;
+                        }
+                    }
+                }
+                ContentInfoKind::Encrypted {
+                    pbe_oid,
+                    salt_hex,
+                    iter_count,
+                    ciphertext_size,
+                } => {
+                    writeln!(f, "        encrypted")?;
+                    writeln!(f, "          PBE       : {pbe_oid}")?;
+                    if let Some(s) = salt_hex {
+                        writeln!(f, "          salt      : {s}")?;
+                    }
+                    if let Some(c) = iter_count {
+                        writeln!(f, "          iter      : {c}")?;
+                    }
+                    writeln!(f, "          ct size   : {ciphertext_size} bytes")?;
+                }
+                ContentInfoKind::Unknown => {
+                    writeln!(f, "        (structure not recognized)")?;
+                }
+            }
+        }
+        if let Some(mac) = &self.mac {
+            writeln!(f, "  MacData")?;
+            writeln!(f, "    digest          : {}", mac.digest_oid)?;
+            writeln!(f, "    salt            : {}", mac.salt_hex)?;
+            writeln!(f, "    iter            : {}", mac.iter_count)?;
+            writeln!(f, "    digest value    : {}", mac.digest_hex)?;
+        } else {
+            writeln!(f, "  MacData           : <none>")?;
+        }
+        if !self.warnings.is_empty() {
+            writeln!(f, "  warnings:")?;
+            for w in &self.warnings {
+                writeln!(f, "    ! {w}")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // ---- Helpers ----------------------------------------------------------------

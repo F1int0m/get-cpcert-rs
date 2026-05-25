@@ -15,6 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use get_cpcert::extract_from_pfx;
+use get_cpcert::pfx::{inspect_pfx, ContentInfoKind};
 
 fn samples_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -138,6 +139,39 @@ fn pfx_samples_extract_correctly() {
 
     if !failures.is_empty() {
         panic!("PFX sample failures:\n{}", failures.join("\n\n"));
+    }
+}
+
+/// `inspect_pfx` is a read-only structural dump.  Run it across every
+/// fixture without a password and make sure (a) it parses, (b) it
+/// recognizes at least one bag, (c) `Display` produces non-empty output.
+#[test]
+fn pfx_inspect_runs_on_all_samples() {
+    let samples = list_samples();
+    if samples.is_empty() {
+        eprintln!("[SKIP] no PFX samples");
+        return;
+    }
+    for (dir, pfx_path) in &samples {
+        let name = label(dir);
+        let bytes = fs::read(pfx_path).unwrap();
+        let report = inspect_pfx(&bytes).expect("inspect must succeed without password");
+
+        assert_eq!(report.pfx_version, Some(3), "[{name}] PFX version");
+        assert!(
+            !report.content_infos.is_empty(),
+            "[{name}] no ContentInfos found"
+        );
+        let has_bag = report
+            .content_infos
+            .iter()
+            .any(|ci| matches!(&ci.kind, ContentInfoKind::Data { bags } if !bags.is_empty()));
+        assert!(has_bag, "[{name}] no SafeBags discovered");
+
+        let printed = format!("{report}");
+        assert!(printed.contains("PFX inspection report"));
+        assert!(printed.contains("ContentInfos"));
+        eprintln!("[{name}] inspect OK ({} chars printed)", printed.len());
     }
 }
 
