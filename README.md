@@ -104,6 +104,7 @@ python3 -m http.server -d wasm/demo 8000
 |---|---|---|
 | `1.2.840.113549.1.12.1.80` | `pkcs8ShroudedKeyBag` в экспортах КриптоПро CSP | Собственный KDF КриптоПро (итеративный Gost94CryptoPro) + GOST 28147-89 CFB + второй уровень key wrap по RFC 4357/7836 (`KDF_GOSTR3411_2012_256` для диверсификации, ECB-расшифровка CEK). |
 | `1.2.840.113549.1.12.1.6` | `certBag` в экспортах КриптоПро CSP | Стандартный PKCS#12 PBE-SHA1-40BitRC2-CBC (PKCS#12 v1 KDF с SHA-1, RC2 с 40-битным эффективным ключом, CBC). |
+| `1.2.840.113549.1.12.1.3` | Альтернативный wrapper в КриптоПро/non-CryptoPro PFX | Стандартный PKCS#12 PBE-SHA1-3-Key-TripleDES-CBC (PKCS#12 v1 KDF с SHA-1, 3DES EDE3 в CBC). |
 | `1.2.840.113549.1.5.13` | Standards-compliant ГОСТ PFX от других тулзов | PBES2 с PBKDF2-HMAC-Streebog256 + GOST 28147-89 CFB (TC26-Z и CryptoPro-A S-boxes). |
 
 Спецификация формата КриптоПро `.80` восстановлена по референс-реализациям [li0ard/cpfx](https://github.com/li0ard/cpfx) (Python) и RFC 7836 §4.5.

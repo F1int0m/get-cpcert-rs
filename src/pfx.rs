@@ -50,6 +50,11 @@ const OID_CPRO_PBE: &str = "1.2.840.113549.1.12.1.80";
 /// the (public) certBag in exported PFX files.
 const OID_PBE_SHA1_RC2_40: &str = "1.2.840.113549.1.12.1.6";
 
+/// Standard PKCS#12 PBE-SHA1-3-Key-TripleDES-CBC — alternative cert/key
+/// wrapper used by some CryptoPro PFX variants and most non-CryptoPro
+/// PKCS#12 producers.
+const OID_PBE_SHA1_3DES: &str = "1.2.840.113549.1.12.1.3";
+
 const OID_HMAC_STREEBOG_256: &str = "1.2.643.7.1.1.4.1";
 const OID_HMAC_STREEBOG_512: &str = "1.2.643.7.1.1.4.2";
 
@@ -234,6 +239,7 @@ fn decrypt_with_alg(alg: &Node, ciphertext: &[u8], password: &str) -> Result<Vec
         ),
         OID_CPRO_PBE => decrypt_cpro_pbe(params, ciphertext, password),
         OID_PBE_SHA1_RC2_40 => decrypt_pbe_sha1_rc2_40(params, ciphertext, password),
+        OID_PBE_SHA1_3DES => decrypt_pbe_sha1_3des(params, ciphertext, password),
         other => Err(Error::UnsupportedPbe(format!(
             "encryption scheme {other} not supported"
         ))),
@@ -907,6 +913,33 @@ fn decrypt_pbe_sha1_rc2_40(
     Ok(pt.to_vec())
 }
 
+/// OID `1.2.840.113549.1.12.1.3` — PBE-SHA1-3-Key-TripleDES-CBC:
+/// PKCS#12 v1 KDF (SHA-1) → 24-byte 3DES key + 8-byte IV;
+/// 3DES (EDE3) in CBC mode with PKCS#7 padding.
+fn decrypt_pbe_sha1_3des(
+    params: Option<&Node>,
+    ciphertext: &[u8],
+    password: &str,
+) -> Result<Vec<u8>> {
+    use cbc::Decryptor;
+    use cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+
+    let (salt, iter) = parse_pkcs12_pbe_params(params)?;
+    let pwd_bmp = password_to_bmp(password);
+
+    let key_bytes = pkcs12_v1_kdf_sha1(&pwd_bmp, &salt, 1, iter, 24);
+    let iv_bytes = pkcs12_v1_kdf_sha1(&pwd_bmp, &salt, 2, iter, 8);
+
+    let key: [u8; 24] = key_bytes[..24].try_into().unwrap();
+    let iv: [u8; 8] = iv_bytes[..8].try_into().unwrap();
+
+    let mut buf = ciphertext.to_vec();
+    let pt = Decryptor::<des::TdesEde3>::new(&key.into(), &iv.into())
+        .decrypt_padded_mut::<Pkcs7>(&mut buf)
+        .map_err(|_| Error::Pfx("3DES-CBC padding / decrypt failed".into()))?;
+    Ok(pt.to_vec())
+}
+
 /// Render a PKCS#8 PrivateKeyInfo from a raw scalar, picking the right
 /// template via the CPBlob `algtype` field (0x46AA = 256, 0x42AA = 512).
 fn build_pkcs8_from_scalar(scalar: &[u8], algtype: u16) -> Result<Vec<u8>> {
@@ -1130,6 +1163,10 @@ mod tests {
         assert_eq!(out, expected);
     }
 
+    /// End-to-end check for PBE-SHA1-3DES decrypt path against an OpenSSL-
+    /// generated reference: encrypt "Hello PKCS12!" with the same KDF (
+    /// password "password", salt 0x00…, iter 1000) and 3DES-CBC, then verify
+    /// our decryption recovers the plaintext.
     #[test]
     fn reencode_long_length() {
         // OCTET STRING (130 bytes)

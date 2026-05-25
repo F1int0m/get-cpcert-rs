@@ -30,6 +30,7 @@ digest = "=0.10.7"
 hmac   = "=0.12.1"        # HMAC over Streebog/Gost94 for PFX PBES2 + MacData
 sha1   = "=0.10.6"        # PKCS#12 v1 KDF / MacData (standard PBE-SHA1-RC2)
 rc2    = "=0.8.1"         # RFC 2268 cipher for the standard certBag PBE
+des    = "=0.8.1"         # 3-key TripleDES for PBE-SHA1-3DES-CBC variant
 cbc    = "=0.1.2"         # CBC mode (with PKCS#7 padding) for the cert
 cipher = "=0.4.4"         # block-cipher trait used by rc2 + cbc
 

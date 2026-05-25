@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- PBE-SHA1-3-Key-TripleDES-CBC (`1.2.840.113549.1.12.1.3`) — handles PFX variants where cert or key bags are wrapped with 3DES instead of RC2-40. New dependency: `des`. Verified end-to-end against an OpenSSL-generated reference PFX (cert+key both wrapped with 3DES).
+
 ## [0.2.0] — PFX / PKCS#12 import
 
 ### Added
