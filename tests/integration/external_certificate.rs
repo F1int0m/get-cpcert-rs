@@ -19,6 +19,8 @@ fn extracts_nonexportable_container_with_external_certificate() -> anyhow::Resul
         "get-cpcert failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.stdout, fs::read(sample.join("expected.pem"))?);
+    let actual = String::from_utf8(output.stdout)?;
+    let expected = fs::read_to_string(sample.join("expected.pem"))?;
+    assert_eq!(actual.replace("\r\n", "\n"), expected.replace("\r\n", "\n"));
     Ok(())
 }
