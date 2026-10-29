@@ -23,6 +23,9 @@ use std::path::{Path, PathBuf};
 
 use get_cpcert::extract;
 
+#[path = "integration/external_certificate.rs"]
+mod external_certificate;
+
 fn samples_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
